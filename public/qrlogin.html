@@ -101,6 +101,80 @@
       font-size: 13px;
       color: #999;
     }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      margin-top: 20px;
+    }
+
+    .user-info img {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .user-info .nickname {
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .user-info .vip-level {
+      font-size: 14px;
+      color: #e5a84b;
+      margin-top: 4px;
+      font-weight: 500;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      background-color: #e5473c;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background-color 0.2s;
+    }
+
+    .btn:hover {
+      background-color: #d43c33;
+    }
+
+    .btn-outline {
+      background-color: transparent;
+      color: #e5473c;
+      border: 1px solid #e5473c;
+    }
+
+    .btn-outline:hover {
+      background-color: #fef2f2;
+    }
+
+    .cookie-display {
+      margin-top: 16px;
+      padding: 12px;
+      background: #f9f9f9;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      word-break: break-all;
+      display: none;
+      text-align: left;
+      border: 1px solid #ddd;
+    }
   </style>
 </head>
 
@@ -109,26 +183,47 @@
     <h1>二维码登录</h1>
     <p class="subtitle">使用网易云音乐App扫描二维码登录</p>
 
-    <div class="qr-wrapper">
+    <div class="qr-wrapper" id="qrWrapper">
       <img id="qrImg" src="" alt="二维码加载中..." />
     </div>
 
     <div id="status" class="status waiting">等待扫描...</div>
 
-    <div id="info" class="info"></div>
+    <div id="userInfo" class="user-info" style="display: none;">
+      <img id="userAvatar" src="" alt="头像" />
+      <div class="nickname" id="userNickname"></div>
+      <div class="vip-level" id="userVip"></div>
+      <div class="button-group">
+        <button class="btn" onclick="showCookie()">获取当前 Cookie</button>
+        <button class="btn btn-outline" onclick="reLogin()">重新扫码</button>
+      </div>
+    </div>
 
-    <p class="hint">请打开网易云音乐App，扫描上方二维码完成登录</p>
+    <div id="cookieDisplay" class="cookie-display"></div>
+
+    <div id="info" class="info" style="display: none;"></div>
+
+    <p class="hint" id="hintText">请打开网易云音乐App，扫描上方二维码完成登录</p>
   </div>
 
   <script src="https://fastly.jsdelivr.net/npm/axios@0.26.1/dist/axios.min.js"></script>
   <script>
+    let timer = null;
+
     async function login() {
-      let timer
       const statusDiv = document.getElementById('status')
       const cookie = localStorage.getItem('cookie')
 
+      if (cookie) {
+        updateStatus('正在检查登录状态...', 'waiting')
+        const isLoggedIn = await getLoginStatus(cookie)
+        if (isLoggedIn) {
+          updateStatus('已登录', 'success')
+          return
+        }
+      }
+
       updateStatus('加载二维码...', 'waiting')
-      getLoginStatus(cookie)
 
       try {
         const res = await axios({
@@ -154,8 +249,8 @@
           } else if (statusRes.code === 803) {
             clearInterval(timer)
             updateStatus('授权登录成功！', 'success')
-            await getLoginStatus(statusRes.cookie)
             localStorage.setItem('cookie', statusRes.cookie)
+            await getLoginStatus(statusRes.cookie)
           }
         }, 3000)
       } catch (error) {
@@ -172,24 +267,81 @@
     }
 
     async function getLoginStatus(cookie = '') {
+      if (!cookie) return false;
       try {
         const res = await axios({
           url: `/login/status?timestamp=${Date.now()}&ua=pc`,
           method: 'post',
-          data: {
-            cookie,
-          },
+          data: { cookie },
         })
-        document.querySelector('#info').textContent = JSON.stringify(res.data, null, 2)
+        const data = res.data;
+        document.querySelector('#info').textContent = JSON.stringify(data, null, 2)
+        
+        if (data.data && data.data.account && data.data.account.status === 0) {
+          const profile = data.data.profile;
+          document.getElementById('userAvatar').src = profile.avatarUrl || '';
+          document.getElementById('userNickname').textContent = profile.nickname || '未知昵称';
+          
+          document.getElementById('qrWrapper').style.display = 'none';
+          document.getElementById('hintText').style.display = 'none';
+          
+          let vipStr = profile.vipType ? `VIP类型: ${profile.vipType}` : '普通用户';
+          
+          try {
+            const vipRes = await axios({
+              url: `/vip/info?timestamp=${Date.now()}`,
+              method: 'post',
+              data: { cookie }
+            });
+            if (vipRes.data && vipRes.data.data) {
+              const vipInfo = vipRes.data.data;
+              const isSVIP = vipInfo.redplus !== null && typeof vipInfo.redplus === 'object';
+              
+              if (isSVIP || vipInfo.cvipLevel) {
+                const level = vipInfo.cvipLevel || vipInfo.redVipLevel || '';
+                vipStr = `黑胶 SVIP Lv.${level}`;
+              } else if (vipInfo.redVipLevel) {
+                vipStr = `黑胶 VIP Lv.${vipInfo.redVipLevel}`;
+              } else if (vipInfo.redVipLevel === 0) {
+                 vipStr = '普通用户';
+              }
+            }
+          } catch(e) {
+            console.error('获取VIP信息失败', e);
+          }
+          
+          document.getElementById('userVip').textContent = vipStr;
+          document.getElementById('userInfo').style.display = 'flex';
+          return true;
+        }
       } catch (error) {
         console.error('获取登录状态失败:', error)
       }
+      return false;
     }
 
     function updateStatus(message, type) {
       const statusDiv = document.getElementById('status')
       statusDiv.textContent = message
       statusDiv.className = 'status ' + type
+    }
+
+    function showCookie() {
+      const cookie = localStorage.getItem('cookie') || '';
+      const display = document.getElementById('cookieDisplay');
+      display.textContent = cookie;
+      display.style.display = display.style.display === 'none' || !display.style.display ? 'block' : 'none';
+    }
+
+    function reLogin() {
+      localStorage.removeItem('cookie');
+      document.getElementById('userInfo').style.display = 'none';
+      document.getElementById('cookieDisplay').style.display = 'none';
+      document.getElementById('qrWrapper').style.display = 'inline-block';
+      document.getElementById('hintText').style.display = 'block';
+      document.querySelector('#info').textContent = '';
+      if (timer) clearInterval(timer);
+      login();
     }
 
     login()
